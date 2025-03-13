@@ -19,7 +19,7 @@ function InputBox({ onSend }) {
         variant="outlined"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyPress={(e) => e.key === "Enter" && handleSend()}
+        onKeyUp={(e) => e.key === "Enter" && handleSend()}
         placeholder="¿Qué dato astronómico deseas obtener?"
         sx={{
           "& .MuiOutlinedInput-root": {
