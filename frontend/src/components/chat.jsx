@@ -11,7 +11,7 @@ const Chat = () => {
   useEffect(() => {
     const fetchMessages = async () => {
       try {
-        const response = await fetch("http://localhost:5001/api/chats"); // Aquí ajustamos la URL
+        const response = await fetch("http://localhost:5001/api/chats");
         if (!response.ok) throw new Error("Error al obtener mensajes");
         const data = await response.json();
         setMessages(data);
@@ -20,32 +20,34 @@ const Chat = () => {
       }
     };
 
-    fetchMessages(); // Cargar mensajes al inicio
-    const interval = setInterval(fetchMessages, 2000); // Consultar cada 2 segundos
-  
-    return () => clearInterval(interval); // Limpiar el intervalo cuando el componente se desmonte
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   // Función para enviar un mensaje al backend
   const sendMessage = async (text) => {
-    const newMessage = { text, sender: "user", timestamp: new Date() };
+    // Agregar el mensaje del usuario al estado local
+    setMessages((prev) => [...prev, { sender: "user", text }]);
 
     try {
       const response = await fetch("http://localhost:5001/api/chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newMessage),
+        body: JSON.stringify({ userMessage: text }), // 🔹 Ahora enviamos 'userMessage'
       });
 
-      if (!response.ok) throw new Error("Error al guardar el mensaje");
+      if (!response.ok) throw new Error("Error al procesar el mensaje");
 
-      const savedMessage = await response.json();
-      setMessages((prev) => [...prev, savedMessage]); // Agregar mensaje a la lista
+      const { botResponse } = await response.json(); // Recibimos la respuesta del bot
+
+      // Agregar la respuesta del bot al estado local
+      setMessages((prev) => [...prev, { sender: "bot", text: botResponse }]);
+
     } catch (error) {
       console.error("Error enviando mensaje:", error);
     }
   };
-  
 
   return (
     <Box 
