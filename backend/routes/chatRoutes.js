@@ -15,6 +15,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Enviar un mensaje y recibir respuesta del bot
 router.post("/", async (req, res) => {
   try {
     const { userMessage } = req.body;
@@ -27,50 +28,19 @@ router.post("/", async (req, res) => {
     const newChat = new Chat({ sender: "user", text: userMessage });
     await newChat.save();
 
-    // Verificar si la clave de OpenAI está disponible
-    const openAiApiKey = process.env.OPENAI_API_KEY;
-    if (!openAiApiKey) {
-      return res.status(500).json({ error: "La clave de OpenAI no está configurada." });
-    }
-
-    // 🔹 Enviar el mensaje a GPT para generar código Python con PyVO
-    const gptResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4",
-        messages: [
-          {
-            "role": "system",
-            "content": "Eres un asistente experto en Astronomía y Observatorios Virtuales; genera código en Python con PyVO para acceder a datos de observatorios virtuales, identificando la base de datos adecuada, asegurando código listo para ejecutar sin errores, sin explicaciones fuera de comentarios, usando catálogos recomendados si la consulta es ambigua, aplicando solo métodos correctos de PyVO, descargando imágenes con .access_url y requests.get(), formateando correctamente con indentación de 4 espacios y retornando únicamente código en Python."
-          },                    
-          { role: "user", content: `Dado el mensaje: "${userMessage}", genera un script en Python usando PyVO para consultar el servicio apropiado.` }
-        ]
-      },
-      {
-        headers: { Authorization: `Bearer ${openAiApiKey}` }
-      }
-    );
-
-    const pythonCode = gptResponse.data.choices[0]?.message?.content;
-
-    if (!pythonCode) {
-      return res.status(500).json({ error: "GPT no devolvió un código válido." });
-    }
-
-    // 🔹 Enviar el código a `query_service.py` para ejecutarlo
+    // 🔹 Enviar el mensaje al servidor Python
     const executionResponse = await axios.post("http://localhost:5002/execute", {
-      code: pythonCode
+      code: userMessage // 🔹 Corrección: Se envía el mensaje correcto
     });
 
-    console.log("Resultado de la ejecución de Python:", executionResponse.data); // DEBUG
-
-    const botResponse = JSON.stringify(executionResponse.data, null, 2);
-
+    // 🔹 Extraer correctamente la respuesta del bot
+    const botResponse = executionResponse.data.bot_response;
+    console.log("Bot response:", botResponse);
     if (!botResponse) {
       return res.status(500).json({ error: "No se recibió respuesta del código Python." });
     }
 
-    // 🔹 Guardar la respuesta en MongoDB
+    // 🔹 Guardar la respuesta del bot en MongoDB
     const botChat = new Chat({ sender: "bot", text: botResponse });
     await botChat.save();
 
