@@ -19,18 +19,20 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { userMessage } = req.body;
+    const aiIcon = req.body.aiIcon;
 
     if (!userMessage) {
       return res.status(400).json({ error: "El mensaje del usuario es requerido." });
     }
 
     // 🔹 Guardar el mensaje del usuario en MongoDB
-    const newChat = new Chat({ sender: "user", text: userMessage });
+    const newChat = new Chat({ sender: "user", text: userMessage, aiIcon: aiIcon });
     await newChat.save();
 
     // 🔹 Enviar el mensaje al servidor Python
     const executionResponse = await axios.post("http://localhost:5002/execute", {
-      code: userMessage // 🔹 Corrección: Se envía el mensaje correcto
+      code: userMessage,
+      ai: aiIcon,
     });
 
     // 🔹 Extraer correctamente la respuesta del bot

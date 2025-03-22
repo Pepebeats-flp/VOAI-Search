@@ -1,11 +1,15 @@
-import { Box, Paper, Typography, TextField, IconButton, Menu } from "@mui/material";
-import { useState, useEffect } from "react";
+import { Box, Paper } from "@mui/material";
+import { useState, useEffect, useRef } from "react";
 import InputBox from "./inputBox";
-import Message from "./message";
-
+import Message from "./Message";
 
 const Chat = () => {
   const [messages, setMessages] = useState([]);
+  const [shouldScroll, setShouldScroll] = useState(true);
+  const messagesEndRef = useRef(null);
+  const containerRef = useRef(null);
+  // Supongamos que Chat también maneja el estado del ícono:
+  const [isDeepSeek, setIsDeepSeek] = useState(true);
 
   // Cargar mensajes desde la API
   useEffect(() => {
@@ -25,25 +29,47 @@ const Chat = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Función para enviar un mensaje al backend
-  const sendMessage = async (text) => {
-    // Agregar el mensaje del usuario al estado local
-    setMessages((prev) => [...prev, { sender: "user", text }]);
+  // Manejar el scroll del contenedor
+  useEffect(() => {
+    const container = containerRef.current;
+    const handleScroll = () => {
+      if (container.scrollTop + container.clientHeight >= container.scrollHeight - 50) {
+        setShouldScroll(true);
+      } else {
+        setShouldScroll(false);
+      }
+    };
 
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Auto-scroll condicional al final del chat
+  useEffect(() => {
+    if (shouldScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, shouldScroll]);
+
+  // Función para alternar el ícono (que se pasa a InputBox)
+  const handleToggleAiIcon = () => {
+    setIsDeepSeek((prev) => !prev);
+  };
+
+  // Función para enviar un mensaje al backend con texto e ícono
+  const sendMessage = async ({ text, aiIcon }) => {
+    // Agregar el mensaje del usuario al estado, opcionalmente incluyendo el dato del ícono
+    setMessages((prev) => [...prev, { sender: "user", text, aiIcon }]);
     try {
       const response = await fetch("http://localhost:5001/api/chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userMessage: text }), // 🔹 Ahora enviamos 'userMessage'
+        // Enviar ambos datos en la solicitud
+        body: JSON.stringify({ userMessage: text, aiIcon }),
       });
-
       if (!response.ok) throw new Error("Error al procesar el mensaje");
-
-      const { botResponse } = await response.json(); // Recibimos la respuesta del bot
-
-      // Agregar la respuesta del bot al estado local
+      const { botResponse } = await response.json();
       setMessages((prev) => [...prev, { sender: "bot", text: botResponse }]);
-
     } catch (error) {
       console.error("Error enviando mensaje:", error);
     }
@@ -62,48 +88,50 @@ const Chat = () => {
       <Box 
         sx={{ 
           width: "100%", 
-          maxWidth: "800px", // Ajusta el ancho máximo del chat
+          maxWidth: "800px",
           display: "flex", 
           flexDirection: "column",
-          height: "80vh", // Ajusta la altura
-          margin: "0 30px"// Ajusta el margen lateral
+          height: "80vh",
+          margin: "0 30px"
         }}
       >
-      <Paper
-        elevation={3}
-        sx={{
-          p: 2,
-          flexGrow: 1,
-          overflowY: "auto",
-          backgroundColor: "marino.main",
-          borderRadius: "20px",
-          maxWidth: "730px",
-          marginLeft: "15px",
-          marginRight: "30px",
-
-          // 🎨 Personalización de la barra de scroll
-          "&::-webkit-scrollbar": {
-            width: "6px", // Ancho de la barra
-          },
-          "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "naranjo.main", // Color normal
+        <Paper
+          ref={containerRef}
+          elevation={3}
+          sx={{
+            p: 2,
+            flexGrow: 1,
+            overflowY: "auto",
+            backgroundColor: "marino.main",
             borderRadius: "20px",
-          },
-          "&::-webkit-scrollbar-thumb:hover": {
-            // agrandar el tamaño del thumb
-            backgroundColor: "naranjo.dark", // Color al pasar el mouse
-          },
-        }}
-      >
-        {/* Aquí se renderizarán los mensajes */}
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 1 }}>
-          {messages.map((msg, index) => (
+            maxWidth: "730px",
+            marginLeft: "15px",
+            marginRight: "30px",
+            "&::-webkit-scrollbar": {
+              width: "6px",
+            },
+            "&::-webkit-scrollbar-thumb": {
+              backgroundColor: "naranjo.main",
+              borderRadius: "20px",
+            },
+            "&::-webkit-scrollbar-thumb:hover": {
+              backgroundColor: "naranjo.dark",
+            },
+          }}
+        >
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 1 }}>
+            {messages.map((msg, index) => (
               <Message key={index} text={msg.text} sender={msg.sender} />
-            ))}      
-        </Box>        
-
-      </Paper>
-        <InputBox onSend={sendMessage}/>
+            ))}
+            {/* Elemento para marcar el final de los mensajes */}
+            <div ref={messagesEndRef} />
+          </Box>        
+        </Paper>
+        <InputBox
+          onSend={sendMessage}
+          isDeepSeek={isDeepSeek}
+          onToggle={handleToggleAiIcon}
+        />
       </Box>
     </Box>
   );

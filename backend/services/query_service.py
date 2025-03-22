@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
-import openai
+import openai 
+from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from astroquery.simbad import Simbad
@@ -13,9 +14,10 @@ app = Flask(__name__)
 
 # Configurar la clave de OpenAI desde .env
 openai.api_key = os.getenv("OPENAI_API_KEY")
+# Cliente para Deepseek
+client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
 
-
-def classify_query(user_message):
+def classify_query(user_message, ai):
     """
     Clasifica una consulta en una de las categorías definidas para observatorios virtuales.
     
@@ -25,17 +27,16 @@ def classify_query(user_message):
       - SCS: Búsqueda de objetos
       - SLA: Líneas espectrales
       - REGISTRY: Descubrimiento de servicios
-    
+
     Args:
         user_message (str): Consulta del usuario.
+        ai (str): Identificador de la API a utilizar ("openai" o "deepseek").
     
     Returns:
         dict: Diccionario con la clasificación de la consulta.
     """
-
-    client = openai.ChatCompletion.create(
-    model="gpt-4o",
-    messages=[
+    
+    messages = [
         {
             "role": "system",
             "content": (
@@ -47,24 +48,36 @@ def classify_query(user_message):
                 "Include all known designations such as Messier numbers (e.g., 'M42'), NGC/IC numbers (e.g., 'NGC 224'), common names (e.g., 'Andromeda Galaxy'), "
                 "and other catalog identifiers (e.g., '2MASS J00361617+1821104', 'PSR B1919+21'). "
                 "If no object is mentioned, return an empty list. "
-                "If the user query is not a any specific object, return a random object from SIMBAD."
+                "If the user query is not a any specific object, return a random object from SIMBAD. "
                 "Respond only with the JSON object, no explanations."
             ),
         },
         {"role": "user", "content": user_message},
-    ],
-    api_key=openai.api_key,
-)
+    ]
 
+    # Seleccionar la API en función del parámetro 'ai'
+    if ai == "openai":
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=messages,
+            api_key=os.getenv("OPENAI_API_KEY")
+        )
+    elif ai == "deepseek":
+        response = client.ChatCompletion.create(
+            model="gpt-4o",  # Asumiendo que el modelo es el mismo; si no, ajusta según corresponda.
+            messages=messages,
+            api_key=os.getenv("DEEPSEEK_API_KEY")
+        )
+    else:
+        raise ValueError("El parámetro 'ai' debe ser 'openai' o 'deepseek'")
 
-    response_text = client["choices"][0]["message"]["content"]
-
-    # Eliminar ```json y ``` del texto de respuesta
+    response_text = response["choices"][0]["message"]["content"]
+    # Eliminar delimitadores de código si están presentes
     response_text = response_text.replace("```json", "").replace("```", "")
-    # Convertir el texto de respuesta en un diccionario
+    # Convertir la respuesta en un diccionario
     response_json = eval(response_text)
-    # Devolver el diccionario con la clasificación
     return response_json
+
 
 def coordinate_resolver_vizier(object_names):
     """
@@ -91,7 +104,7 @@ def coordinate_resolver_vizier(object_names):
             return ra, dec  # Retorna las coordenadas
     return None
 
-def sia (user_message, object_name, coordinates):
+def sia2 (user_message, object_name, coordinates):
     """
     Servicio de Imágenes Astronómicas (SIA).
     
@@ -123,7 +136,7 @@ def sia (user_message, object_name, coordinates):
         ],
         api_key=openai.api_key,
     )
-    
+ 
 
     response_url = client["choices"][0]["message"]["content"]
     # Devolver el diccionario con la respuesta
@@ -134,12 +147,13 @@ def execute():
     try:
         data = request.get_json()
         user_message = data.get("code")  # Recibimos el mensaje del usuario
+        ai = data.get("ai")
         print("User message:", user_message)
         if not user_message:
             return jsonify({"error": "No se recibió un mensaje válido."}), 400
 
         # Clasificar la consulta del usuario
-        classification = classify_query(user_message)
+        classification = classify_query(user_message, ai)
         print("Classification:", classification)
 
         category = classification.get("category")
@@ -151,7 +165,7 @@ def execute():
         elif category == "SIA":
             coordinates = coordinate_resolver_vizier(object_name)
             print("Coordinates:", coordinates)
-            response = sia(user_message, object_name, coordinates)
+            response = sia2(user_message, object_name, coordinates)
             print("Response:", response)
             return jsonify({"bot_response": response}), 200       
         
