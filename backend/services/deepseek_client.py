@@ -9,7 +9,7 @@ def setup_deepseek():
     openai.api_key = os.getenv("DEEPSEEK_API_KEY")
     openai.api_base = "https://api.deepseek.com"
 
-def get_chat_completion(messages, model="deepseek-chat"):
+def get_chat_completion(messages, model="deepseek-reasoner"):
     setup_deepseek()
     response = openai.ChatCompletion.create(
         model=model,

@@ -2,8 +2,6 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import pyvo
 from astroquery.vizier import Vizier
-import gpt_client
-import deepseek_client
 import requests
 from PIL import Image
 from io import BytesIO
@@ -11,6 +9,53 @@ import random
 from astroquery.vizier import Vizier
 from astropy.coordinates import SkyCoord
 import astropy.units as u
+from astropy.io import fits
+import matplotlib
+matplotlib.use('Agg')  # Usa backend no-interactivo
+import matplotlib.pyplot as plt
+import numpy as np
+import tempfile
+import os
+
+def plot_fits_image_from_url(fits_url, output_path="imagen_fits.png"):
+    try:
+        # Descargar el archivo FITS temporalmente
+        response = requests.get(fits_url)
+        response.raise_for_status()  # Lanza error si hubo problemas al descargar
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp_file:
+            tmp_file.write(response.content)
+            temp_fits_path = tmp_file.name
+
+        # Abrir archivo FITS
+        with fits.open(temp_fits_path) as hdul:
+            hdul.info()
+
+            # Buscar la primera extensión que contenga datos tipo imagen
+            image_data = None
+            for hdu in hdul:
+                if hdu.data is not None:
+                    image_data = hdu.data
+                    break
+
+            if image_data is None:
+                raise ValueError("No se encontró una imagen en el archivo FITS.")
+
+            # Graficar y guardar la imagen
+            plt.figure(figsize=(8, 8))
+            plt.imshow(image_data, cmap='gray', origin='lower')
+            plt.colorbar()
+            plt.title("Imagen FITS")
+            plt.savefig(output_path, bbox_inches="tight")
+            plt.close()
+
+            print(f"✅ Imagen guardada en: {output_path}")
+
+        # Eliminar archivo temporal
+        os.remove(temp_fits_path)
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
 
 # Cargar variables de entorno
@@ -20,9 +65,8 @@ load_dotenv()
 import gpt_client
 import deepseek_client
 
-
 app = Flask(__name__)
-    
+
 def classify_query(user_message, ai):
     messages = [
         {
@@ -51,6 +95,40 @@ def classify_query(user_message, ai):
     response_json = eval(response_text)
     return response_json
 
+
+def improve_sia_search(ra, dec, size, format, bandpass, instrument, ai):
+    """ Utiliza IA para mejorar los parámetros de búsqueda en SIA """
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an expert in astronomy data retrieval. Given the following parameters for a SIA query (IVOA), "
+                "optimize them to increase the chance of finding an image."
+                "Respond with a JSON containing 'size' (recommended search size in degrees), 'bandpass' (suggested alternative if none is found), "
+                "and 'priority_services' (a list of recommended SIA service URLs)."
+                "searching for images in the specified format, bandpass, and instrument."
+                "respond just with the JSON object, without explanations."
+
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"RA: {ra}, DEC: {dec}, size: {size}, format: {format}, bandpass: {bandpass}, instrument: {instrument}",
+        },
+    ]
+    if ai == "openai":
+        response2 = gpt_client.get_chat_completion(messages)
+    elif ai == "deepseek":
+        response2 = deepseek_client.get_chat_completion(messages)
+    else:
+        raise ValueError("El parámetro 'ai' debe ser 'openai' o 'deepseek'")
+
+    response_text = response2["choices"][0]["message"]["content"]
+    print(response_text)
+    response_text = response_text.replace("```json", "").replace("```", "")
+    response_json = eval(response_text)  # Se recomienda usar json.loads() si el JSON es seguro.
+    return response_json
+
 def coordinate_resolver_vizier(object_names):
     """
     Resuelve las coordenadas (RA, Dec) de un objeto usando VizieR.
@@ -71,44 +149,58 @@ def coordinate_resolver_vizier(object_names):
     
     return None
 
-def sia(coordinates, classification, size=0.01, max_size=10.0):
+def sia(coordinates, classification, size, ai):
     ra, dec = coordinates
     format = classification.get("format")
     bandpass = classification.get("bandpass")
     instrument = classification.get("instrument")
-    
-    print(f"🔭 Buscando imágenes en SIA para ({ra}, {dec})")
+
+    # Mejorar parámetros de búsqueda con IA
+    optimized_params = improve_sia_search(ra, dec, size, format, bandpass, instrument, ai)
+    size = optimized_params.get("size", size)
+    bandpass = optimized_params.get("bandpass", bandpass)
+    priority_services = optimized_params.get("priority_services", [])
+
+    print(f"🔭 Buscando imágenes en SIA para ({ra}, {dec}) con tamaño {size}° y banda {bandpass}")
+
     sia_services = list(pyvo.registry.search(servicetype="sia"))
-    
+
+    if priority_services:
+        sia_services = [s for s in sia_services if s.access_url in priority_services] + sia_services
+
     if not sia_services:
         return "No se encontraron servicios SIA disponibles."
 
     random.shuffle(sia_services)
     
-    while size <= max_size:
-        for service in sia_services:
-            try:
-                sia_service = pyvo.dal.SIAService(service.access_url)
-                images = sia_service.search(pos=(ra, dec), size=size)
+    for service in sia_services:
+        try:
+            sia_service = pyvo.dal.SIAService(service.access_url)
+            images = sia_service.search(pos=(ra, dec), size=size, band=bandpass)
 
-                if len(images) > 0:
-                    random_image = random.choice(images)
+            if len(images) > 0:
+                valid_images = [img for img in images if img["format"].startswith("image/")]
+
+                if valid_images:
+                    random_image = random.choice(valid_images)
                     image_url = random_image.getdataurl()
                     response = requests.get(image_url)
-                    
+
                     if response.status_code == 200:
                         img = Image.open(BytesIO(response.content))
                         img.show()
-                        print(f"📏 Tamaño óptimo encontrado: {size} grados")
+                        plot_fits_image_from_url(image_url)
+                        print(f"Imagen descargada y mostrada: {image_url}")
                         return image_url
-                
-            except Exception as e:
-                print(f"Error al consultar {service.access_url}: {e}")
+                    else:
+                        print(f"Error al descargar la imagen: {response.status_code}")
+                else:
+                    print(f"No se encontraron imágenes válidas en el servicio {service.access_url}.")
+        except Exception as e:
+            print(f"Error al consultar {service.access_url}: {e}")
 
-        size *= 2  # Duplicar el tamaño si no se encuentra nada
-        print(f"🔄 Aumentando tamaño de búsqueda a {size} grados...")
-    
     return "No se encontraron imágenes en ningún servicio SIA."
+
 
 @app.route("/execute", methods=["POST"])
 def execute():
@@ -140,7 +232,7 @@ def execute():
             
             print("Coordinates:", coordinates)
 
-            response = sia(coordinates,classification)
+            response = sia(coordinates, classification, size=0.01 , ai = ai)
 
             print("Response:", response)
             return jsonify({"bot_response": response}), 200
